@@ -1,0 +1,83 @@
+import os
+import time
+
+from solana.account import Account
+from solana.rpc.api import Client
+from solana.rpc.types import TxOpts
+from solana.transaction import Transaction
+
+# Set your wallet secret key and target NFT address here
+WALLET_SECRET_KEY = 'YOUR WALLET SECRET KEY'
+TARGET_NFT_ADDRESS = 'YOUR TARGET NFT ADDRESS'
+
+# Set the maximum price you're willing to pay for the NFT
+MAX_PRICE = 10_000_000_000 # e.g. 10 Sol
+
+# Set the list of marketplace program IDs to search for the NFT
+MARKETPLACE_PROGRAM_IDS = [
+    'magiceden1a6xv9y', 
+    'Solanart111111', 
+    'Hideswapftw1', 
+    'tensorvote1', 
+    'o6kLWAMNi3j4mvQeP2ZJLhBm8gj3FmFBSzPmFrYxbKd' # Opensea
+]
+
+# Initialize Solana client and account
+rpc = Client("https://api.mainnet-beta.solana.com")
+payer_account = Account(WALLET_SECRET_KEY)
+
+# Check for NFT availability on marketplaces
+while True:
+    for program_id in MARKETPLACE_PROGRAM_IDS:
+        resp = rpc.get_program_accounts(program_id, data_size=300)
+        for account in resp:
+            try:
+                owner_account_address = account['account']['data']['parsed']['info']['owner']
+                nft_address = account['account']['data']['parsed']['info']['data']['nft']['info']['address']
+                price = account['account']['data']['parsed']['info']['data']['nft']['info']['price']
+
+                if nft_address == TARGET_NFT_ADDRESS and price <= MAX_PRICE:
+                    # Found the target NFT within price range
+                    print(f"Found target NFT with owner {owner_account_address} and price {price / 10**9} Sol on marketplace {program_id}.")
+
+                    # Snipe the NFT
+                    tx = Transaction().add(
+                        *[
+                            (
+                                'transfer',
+                                payer_account.public_key(),
+                                owner_account_address,
+                                int(price),
+                            ),
+                            (
+                                'close_account',
+                                owner_account_address,
+                                payer_account.public_key(),
+                            ),
+                        ]
+                    )
+
+                    tx_sig = rpc.send_transaction(
+                        tx,
+                        payer_account,
+                        opts=TxOpts(skip_confirmation=False, preflight_commitment='max'),
+                    )
+
+                    print(f"Sniped target NFT with signature: {tx_sig}")
+
+                    # Wait for transaction confirmation
+                    while True:
+                        tx_info = rpc.get_confirmed_transaction(tx_sig)
+                        if tx_info:
+                            print(f"Transaction confirmed: {tx_info}")
+                            break
+                        time.sleep(1)
+
+                    # Exit the program after sniping the NFT
+                    exit()
+
+            except (KeyError, TypeError):
+                pass
+
+    # Wait for 1 second before checking again
+    time.sleep(1)
